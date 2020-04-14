@@ -4,33 +4,40 @@ import struct
 import signal
 import glob
 import argparse
+import zmq
+import tempfile
 
 QEMU_PATH = os.path.dirname(os.path.realpath(__file__))+"/afl-qemu-trace"
-
-
 INPUT_FILE = "/dev/shm/coverage_input" #each input is stored here
 
 
 parser = argparse.ArgumentParser(description='Fast Forkserver Base Binary Coverage')
  
-parser.add_argument('-i', metavar='input_folder',  help='Where to look for input files', required=True)
-parser.add_argument('-o', metavar='output_folder', help='Where to store the trace files', required=True)
-parser.add_argument('-m', metavar='wordize',choices=["32","64"], help='Architecture to use for QEMU', required=True)
-parser.add_argument('-t', nargs='?', metavar="timeout", const=1.0, default=1.0, type=float, help='Timeout in seconds')
-parser.add_argument('cmd', metavar="...", nargs=argparse.REMAINDER, help = 'Command to run, @@ is replaced by input file')
+parser.add_argument('-o', metavar='output_folder',
+                    help='Where to store the trace files', default=None)
+parser.add_argument('-m', metavar='wordize',choices=["32","64"],
+                    help='Architecture to use for QEMU', required=True)
+parser.add_argument('-z', metavar="zmq_url", required=True,
+                    help='zmq url which sends jobs and where results are returned')
+parser.add_argument('-t', nargs='?', metavar="timeout", const=1.0,
+                    default=1.0, type=float, help='Timeout in seconds')
+parser.add_argument('cmd', metavar="...", nargs=argparse.REMAINDER,
+                    help = 'Command to run, @@ is replaced by input file')
 
-def replace_input(f, file):
+
+def replace_input(f, filepath):
     if f == "@@":
-        return file
+        return filepath
     else:
         return f
+
+
 args = parser.parse_args()
 ARGS = [replace_input(f,INPUT_FILE) for f in args.cmd]
-INDIR = args.i
-OUTDIR = args.o
+OUTDIR = args.o or tempfile.mkdtemp()
 QEMU_PATH += "_"+args.m
 TIMEOUT = args.t
-print("Running %s with timeout %f on %d inputs\n"%(" ".join(ARGS), TIMEOUT, len(glob.glob(INDIR+"/*"))))
+ZMQ_URL = args.z
 HIDE_OUTPUT = True
 
 def handle_timeout(pid):
@@ -40,7 +47,7 @@ class Forkserver:
     def __init__(self):
         self.ctl_out, self.ctl_in = os.pipe()
         self.st_out, self.st_in = os.pipe()
-        self.in_file = open(INPUT_FILE, "w+")
+        self.in_file = open(INPUT_FILE, "wb+")
 
         fork_pid = os.fork()
         if fork_pid == 0:
@@ -63,10 +70,10 @@ class Forkserver:
         os.dup2(self.in_file.fileno(),0)
         os.close(self.in_file.fileno())
 
-        os.close(self.ctl_in);
-        os.close(self.ctl_out);
-        os.close(self.st_in);
-        os.close(self.st_out);
+        os.close(self.ctl_in)
+        os.close(self.ctl_out)
+        os.close(self.st_in)
+        os.close(self.st_out)
         env = {"TRACE_OUT_DIR": OUTDIR,
                "QEMU_LOG": "nochain",
                } 
@@ -74,10 +81,9 @@ class Forkserver:
         print("child failed")
 
     def parent(self):
-
-            os.close(self.ctl_out);
-            os.close(self.st_in);
-            os.read(self.st_out, 4);
+        os.close(self.ctl_out)
+        os.close(self.st_in)
+        os.read(self.st_out, 4)
 
     def run(self, testcase):
         self.in_file.truncate(0)
@@ -85,9 +91,9 @@ class Forkserver:
         self.in_file.write(testcase)
         self.in_file.seek(0)
 
-        os.write(self.ctl_in, "\0\0\0\0")
+        os.write(self.ctl_in, b"\0\0\0\0")
 
-        pid = struct.unpack("I",os.read(self.st_out, 4))[0]
+        pid = struct.unpack("I", os.read(self.st_out, 4))[0]
 
         signal.signal(signal.SIGALRM, lambda signum,sigfr : handle_timeout(pid))
         signal.setitimer(signal.ITIMER_REAL, TIMEOUT, 0)
@@ -102,14 +108,35 @@ class Forkserver:
             status = struct.unpack("I",status)[0]
         return status
 
-frk = Forkserver()
-if not os.path.isdir(OUTDIR):
-    os.mkdir(OUTDIR)
+context = zmq.Context()
+socket = context.socket(zmq.DEALER)
+socket.setsockopt(zmq.IDENTITY, f'T_{os.getpid()}'.encode())
+socket.connect(ZMQ_URL)
 
-for p in glob.glob(INDIR+"/*"):
-    with open(p, 'r') as f:
-        print("run %s"%p)
-        frk.run(f.read())
-        for trace in glob.glob(OUTDIR+"/trace_thread_*.qemu"):
-            #print("mv", trace, OUTDIR+"/input_%s_thread_%s"%(os.path.basename(p), trace.split("_")[-1]))
-            os.rename(trace, OUTDIR+"/input_%s_thread_%s"%(os.path.basename(p), trace.split("_")[-1]))
+frk = Forkserver()
+while True:
+    socket.send_multipart([b'T_UP'])
+    time.sleep(0.2)
+    try:
+        socket.recv_multipart(zmq.NOBLOCK)
+    except zmq.error.Again:
+        continue
+    break
+
+while True:
+    msg = socket.recv_multipart()
+    msg_type = msg[0]
+    if msg_type == b"DIE":
+        break
+    elif msg_type == b"TRACE":
+        path = msg[1]
+        with open(path, 'rb') as f:
+            frk.run(f.read())
+            traces = []
+            for trace in glob.glob(OUTDIR+"/trace_thread_*.qemu"):
+                with open(trace, 'rb') as t:
+                    traces.append(t.read())
+                os.unlink(trace)
+        socket.send_multipart([b'T_TR', path, *traces])
+    else:
+        print(f"Unknown message: {msg}")
