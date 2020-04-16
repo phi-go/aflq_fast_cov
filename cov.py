@@ -50,6 +50,9 @@ class Forkserver:
         self.in_file = open(INPUT_FILE, "wb+")
 
         fork_pid = os.fork()
+        if fork_pid < 0:
+            print("failed fork")
+            raise RuntimeError("Failed to fork child")
         if fork_pid == 0:
             self.child()
         else:
@@ -108,7 +111,7 @@ class Forkserver:
             status = struct.unpack("I",status)[0]
         return status
 
-context = zmq.Context()
+context = zmq.Context.instance()
 socket = context.socket(zmq.DEALER)
 socket.setsockopt(zmq.IDENTITY, f'T_{os.getpid()}'.encode())
 socket.connect(ZMQ_URL)
@@ -140,3 +143,5 @@ while True:
         socket.send_multipart([b'T_TR', path, *traces])
     else:
         print(f"Unknown message: {msg}")
+socket.close(linger=0)
+context.destroy(linger=0)
