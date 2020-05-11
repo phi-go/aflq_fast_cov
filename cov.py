@@ -38,7 +38,7 @@ OUTDIR = args.o or tempfile.mkdtemp()
 QEMU_PATH += "_"+args.m
 TIMEOUT = args.t
 ZMQ_URL = args.z
-HIDE_OUTPUT = True
+HIDE_OUTPUT = False
 
 def handle_timeout(pid):
     os.kill(pid, signal.SIGKILL)
