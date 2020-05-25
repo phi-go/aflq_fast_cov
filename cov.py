@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import struct
 import signal
@@ -6,6 +7,8 @@ import glob
 import argparse
 import zmq
 import tempfile
+
+print("starting up", file=sys.stderr)
 
 QEMU_PATH = os.path.dirname(os.path.realpath(__file__))+"/afl-qemu-trace"
 INPUT_FILE = "/dev/shm/coverage_input" #each input is stored here
@@ -41,6 +44,8 @@ ZMQ_URL = args.z
 HIDE_OUTPUT = False
 
 def handle_timeout(pid):
+    print("got timeout", file=sys.stderr)
+    sys.stderr.flush()
     os.kill(pid, signal.SIGKILL)
 
 class Forkserver:
@@ -51,7 +56,7 @@ class Forkserver:
 
         fork_pid = os.fork()
         if fork_pid < 0:
-            print("failed fork")
+            print("failed fork", file=sys.stderr)
             raise RuntimeError("Failed to fork child")
         if fork_pid == 0:
             self.child()
@@ -81,7 +86,7 @@ class Forkserver:
                "QEMU_LOG": "nochain",
                } 
         os.execve(QEMU_PATH,["afl-qemu-trace"]+ARGS, env)
-        print("child failed")
+        print("child failed", file=sys.stderr)
 
     def parent(self):
         os.close(self.ctl_out)
@@ -116,6 +121,8 @@ socket = context.socket(zmq.DEALER)
 socket.setsockopt(zmq.IDENTITY, f'T_{os.getpid()}'.encode())
 socket.connect(ZMQ_URL)
 
+print("starting coverage forkserver", file=sys.stderr)
+sys.stderr.flush()
 frk = Forkserver()
 while True:
     socket.send_multipart([b'T_UP'])
@@ -126,6 +133,8 @@ while True:
         continue
     break
 
+traces_per_second = 0
+last_check = time.time()
 while True:
     msg = socket.recv_multipart()
     msg_type = msg[0]
@@ -141,7 +150,15 @@ while True:
                     traces.append(t.read())
                 os.unlink(trace)
         socket.send_multipart([b'T_TR', path, *traces])
+        traces_per_second += 1
     else:
-        print(f"Unknown message: {msg}")
+        print(f"Unknown message: {msg}", file=sys.stderr)
+
+    # if traces_per_second > 0 and last_check+1 < time.time():
+    #     print(f"traces/s: {traces_per_second}", file=sys.stderr)
+    #     sys.stderr.flush()
+    #     traces_per_second = 0
+    #     last_check = time.time()
+
 socket.close(linger=0)
 context.destroy(linger=0)
