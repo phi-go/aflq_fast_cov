@@ -41,7 +41,7 @@ OUTDIR = args.o or tempfile.mkdtemp()
 QEMU_PATH += "_"+args.m
 TIMEOUT = args.t
 ZMQ_URL = args.z
-HIDE_OUTPUT = False
+HIDE_OUTPUT = True
 
 def handle_timeout(pid):
     print("got timeout", file=sys.stderr)
