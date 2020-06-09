@@ -14,6 +14,7 @@ print("starting up", file=sys.stderr)
 QEMU_PATH = os.path.dirname(os.path.realpath(__file__))+"/afl-qemu-trace"
 
 #each input is stored here
+Path('/dev/shm/coverage/').mkdir(parents=True, exist_ok=True)
 INPUT_FILE = str(Path(tempfile.mkdtemp(dir='/dev/shm/coverage/'))/"coverage_input")
 
 
