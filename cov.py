@@ -7,11 +7,14 @@ import glob
 import argparse
 import zmq
 import tempfile
+from pathlib import Path
 
 print("starting up", file=sys.stderr)
 
 QEMU_PATH = os.path.dirname(os.path.realpath(__file__))+"/afl-qemu-trace"
-INPUT_FILE = "/dev/shm/coverage_input" #each input is stored here
+
+#each input is stored here
+INPUT_FILE = str(Path(tempfile.mkdtemp(dir='/dev/shm/coverage/'))/"coverage_input")
 
 
 parser = argparse.ArgumentParser(description='Fast Forkserver Base Binary Coverage')
