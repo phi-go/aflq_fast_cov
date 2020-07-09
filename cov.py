@@ -137,7 +137,6 @@ while True:
         continue
     break
 
-traces_per_second = 0
 last_check = time.time()
 while True:
     msg = socket.recv_multipart()
@@ -145,16 +144,25 @@ while True:
     if msg_type == b"DIE":
         break
     elif msg_type == b"TRACE":
-        path = msg[1]
-        with open(path, 'rb') as f:
-            frk.run(f.read())
-            traces = []
-            for trace in glob.glob(OUTDIR+"/trace_thread_*.qemu"):
-                with open(trace, 'rb') as t:
-                    traces.append(t.read())
-                os.unlink(trace)
-        socket.send_multipart([b'T_TR', path, *traces])
-        traces_per_second += 1
+        tries = 1
+        while True:
+            path = msg[1]
+            with open(path, 'rb') as f:
+                res = frk.run(f.read())
+                if res != 0:
+                    print(path, res, flush=True)
+                    time.sleep(0.1)
+                    if tries >= 3:
+                        break
+                    tries += 1
+                    continue
+                traces = []
+                for trace in glob.glob(OUTDIR+"/trace_thread_*.qemu"):
+                    with open(trace, 'rb') as t:
+                        traces.append(t.read())
+                    os.unlink(trace)
+            socket.send_multipart([b'T_TR', path, *traces])
+            break
     else:
         print(f"Unknown message: {msg}", file=sys.stderr)
 
