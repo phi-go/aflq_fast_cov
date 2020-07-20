@@ -148,11 +148,11 @@ while True:
         while True:
             path = msg[1]
             with open(path, 'rb') as f:
-                res = frk.run(f.read())
+                res = frk.run(f.read())%256  # posix return code is mod 256
                 if res != 0:
-                    print(path, res, flush=True)
                     time.sleep(0.1)
                     if tries >= 3:
+                        print("path failed -", "res:", res, "tries:", tries, "path:", path, flush=True)
                         break
                     tries += 1
                     continue
